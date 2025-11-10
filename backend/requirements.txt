@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pandas
+requests
+firebase_admin
+sqlalchemy
+python-multipart
+aiofiles
+watchdog
