@@ -1,5 +1,6 @@
 import uvicorn
 import firebase_admin
+import os
 from firebase_admin import credentials
 import pathlib
 from contextlib import asynccontextmanager
@@ -18,7 +19,8 @@ from .file_watcher import start_watcher_in_thread
 
 # --- PATHS ---
 BASE_DIR = pathlib.Path(__file__).resolve().parent
-SDK_PATH = BASE_DIR / "firebase-sdk.json"
+# SDK_PATH = BASE_DIR / "firebase-sdk.json"
+SDK_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 FRONTEND_DIST_DIR = BASE_DIR / "dist"   # ⚙️ Vite output folder
 
 
