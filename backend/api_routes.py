@@ -1,6 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import pandas as pd
+import io
+from fastapi.responses import StreamingResponse # Download Excel ke liye
 
 # Local modules
 from . import crud, models, schemas, auth
@@ -173,3 +176,169 @@ def admin_verify_wholesaler(
     if not user:
         raise HTTPException(status_code=404, detail="Wholesaler user not found or user is not a wholesaler")
     return user
+
+# === Admin Product Management ===
+
+@router.post("/admin/products", response_model=schemas.Product)
+def admin_create_product(
+    product_data: schemas.ProductCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 1: Admin ke liye naya product manually add karna.
+    """
+    return crud.create_product(db=db, product_data=product_data)
+
+
+@router.post("/admin/upload-excel")
+async def admin_upload_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 2: Admin ke liye Excel se bulk product upload/update karna.
+    """
+    try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
+        df = df.fillna('') 
+        
+        products_added = 0
+        products_updated = 0
+        
+        for index, row in df.iterrows():
+            existing_product = db.query(models.Product).filter(models.Product.name == row['name']).first()
+
+            if existing_product:
+                existing_product.description = row['description']
+                existing_product.original_price = float(row['original_price'])
+                existing_product.image_url = row['image_url']
+                existing_product.stock = int(row['stock'])
+                existing_product.retail_price = float(row['retail_price'])
+                existing_product.wholesaler_price = float(row['wholesaler_price'])
+                products_updated += 1
+            else:
+                new_product = models.Product(
+                    name=row['name'],
+                    description=row['description'],
+                    original_price=float(row['original_price']),
+                    image_url=row['image_url'],
+                    stock=int(row['stock']),
+                    retail_price = float(row['retail_price']),
+                    wholesaler_price = float(row['wholesaler_price'])
+                )
+                db.add(new_product)
+                products_added += 1
+        
+        db.commit()
+        return {
+            "status": "success",
+            "added": products_added,
+            "updated": products_updated
+        }
+        
+    except Exception as e:
+        db.rollback() 
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+
+@router.put("/admin/products/{product_id}", response_model=schemas.Product)
+def admin_update_product(
+    product_id: int,
+    product_data: schemas.ProductCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 3: Admin ke liye ek product ko update karna.
+    """
+    updated_product = crud.update_product(db=db, product_id=product_id, product_data=product_data)
+    if updated_product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return updated_product
+
+
+@router.delete("/admin/products/{product_id}", response_model=schemas.Product)
+def admin_delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 4: Admin ke liye ek single product ko delete karna.
+    """
+    deleted_product = crud.delete_product(db=db, product_id=product_id)
+    if deleted_product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return deleted_product
+
+
+@router.delete("/admin/products-all")
+def admin_delete_all_products(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 5: Admin ke liye saare products ko delete karna (DANGEROUS).
+    """
+    rows_deleted = crud.delete_all_products(db=db)
+    return {"status": "success", "products_deleted": rows_deleted}
+
+
+@router.get("/admin/products/download-excel")
+async def admin_download_excel(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 6: Admin ke liye saare products ko Excel file mein download karna.
+    """
+    try:
+        products = crud.get_all_products_for_excel(db)
+        
+        products_dict = [
+            {
+                "name": p.name,
+                "description": p.description,
+                "original_price": p.original_price,
+                "retail_price": p.retail_price,
+                "wholesaler_price": p.wholesaler_price,
+                "image_url": p.image_url,
+                "stock": p.stock
+            }
+            for p in products
+        ]
+        
+        df = pd.DataFrame(products_dict)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Products', index=False)
+        
+        output.seek(0) 
+        
+        headers = {
+            'Content-Disposition': 'attachment; filename="all_products.xlsx"'
+        }
+        
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate Excel file: {str(e)}")
+
+
+@router.get("/admin/products-list", response_model=schemas.ProductListAdmin)
+def admin_get_products_list_paginated(
+    skip: int = 0,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_admin_user)
+):
+    """
+    Feature 7: Admin ke liye paginated product list fetch karna.
+    """
+    products = crud.get_products_for_admin_paginated(db, skip=skip, limit=limit)
+    total_count = crud.get_products_count(db)
+    return {"products": products, "total_count": total_count}

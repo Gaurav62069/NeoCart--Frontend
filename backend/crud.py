@@ -93,8 +93,84 @@ def verify_wholesaler(db: Session, user_id: int):
     return user
 
 
+# --- YAHAN NAYA FUNCTION ADD KIYA GAYA HAI ---
 # --- Product CRUD ---
 
+def create_product(db: Session, product_data: schemas.ProductCreate):
+    """
+    Admin ke liye database mein naya product manually create karna.
+    """
+    new_product = models.Product(
+        name=product_data.name,
+        description=product_data.description,
+        original_price=product_data.original_price,
+        retail_price=product_data.retail_price,
+        wholesaler_price=product_data.wholesaler_price,
+        image_url=product_data.image_url,
+        stock=product_data.stock
+    )
+    db.add(new_product)
+    db.commit()
+    db.refresh(new_product)
+    return new_product
+
+def update_product(db: Session, product_id: int, product_data: schemas.ProductCreate):
+    """
+    Admin ke liye ek existing product ko update karna.
+    """
+    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not db_product:
+        return None
+    
+    # Update fields
+    db_product.name = product_data.name
+    db_product.description = product_data.description
+    db_product.original_price = product_data.original_price
+    db_product.retail_price = product_data.retail_price
+    db_product.wholesaler_price = product_data.wholesaler_price
+    db_product.image_url = product_data.image_url
+    db_product.stock = product_data.stock
+    
+    db.commit()
+    db.refresh(db_product)
+    return db_product
+
+def delete_product(db: Session, product_id: int):
+    """
+    Admin ke liye ek single product ko delete karna.
+    """
+    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not db_product:
+        return None
+    
+    db.delete(db_product)
+    db.commit()
+    return db_product
+
+def delete_all_products(db: Session):
+    """
+    Admin ke liye saare products ko delete karna.
+    """
+    rows_deleted = db.query(models.Product).delete()
+    db.commit()
+    return rows_deleted
+def get_products_count(db: Session) -> int:
+    """
+    Admin ke liye total product count fetch karna.
+    """
+    return db.query(models.Product).count()
+
+def get_products_for_admin_paginated(db: Session, skip: int = 0, limit: int = 10) -> List[models.Product]:
+    """
+    Admin ke liye paginated products fetch karna.
+    Products ko ID ke hisab se descending order (naya pehle) mein sort kiya gaya hai.
+    """
+    return db.query(models.Product).order_by(models.Product.id.desc()).offset(skip).limit(limit).all()
+def get_all_products_for_excel(db: Session) -> List[models.Product]:
+    """
+    Excel download ke liye saare products ko bina pagination ke fetch karna.
+    """
+    return db.query(models.Product).all()
 def get_products(db: Session, user_role: str, skip: int = 0, limit: int = 100, search_term: Optional[str] = None) -> List[models.Product]:
     """
     Fetch products with pagination and DYNAMIC pricing based on role.

@@ -1,109 +1,92 @@
-import os
-import json
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+import uvicorn
 import firebase_admin
 from firebase_admin import credentials
-from . import api_routes, auth, database, excel_updater, file_watcher
+import pathlib
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles # Frontend ke liye
+from fastapi.responses import FileResponse    # Frontend ke liye
+import os # Path join karne ke liye
 
-# -----------------------------------------------------
-# ✅ Firebase Initialization (Render-safe environment)
-# -----------------------------------------------------
-firebase_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+# Local modules
+from . import auth, api_routes 
+from .database import engine, Base
 
-if firebase_json:
-    try:
-        # Convert JSON string to dict
-        firebase_creds = json.loads(firebase_json)
+# --- Paths ---
+# Yeh 'backend' folder ka poora path pata karega
+BASE_DIR = pathlib.Path(__file__).resolve().parent 
+SDK_PATH = BASE_DIR / "firebase-sdk.json"
 
-        # Write temporary Firebase file (Render-safe)
-        temp_path = "/tmp/firebase.json"
-        with open(temp_path, "w") as f:
-            json.dump(firebase_creds, f)
+# --- FastAPI Lifespan Event ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles startup and shutdown events for the FastAPI app.
+    """
+    # On Startup
+    print("Application startup...")
+    print("Creating database tables if they don't exist...")
+    Base.metadata.create_all(bind=engine) 
+    yield
+    # On Shutdown
+    print("Application shutdown...")
 
-        # Initialize Firebase using temporary file
-        cred = credentials.Certificate(temp_path)
-        firebase_admin.initialize_app(cred)
-        print("✅ Firebase initialized successfully on Render.")
-    except Exception as e:
-        print("❌ Firebase initialization failed:", e)
-else:
-    print("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON not found in environment variables.")
 
-# -----------------------------------------------------
-# ✅ CORS Setup
-# -----------------------------------------------------
-origins = ["*"]
+# --- Firebase Admin SDK Initialization ---
+try:
+    # SDK_PATH ab poore path ka istemal kar raha hai
+    cred = credentials.Certificate(SDK_PATH) 
+    firebase_admin.initialize_app(cred)
+except FileNotFoundError:
+    print(f"FATAL ERROR: '{SDK_PATH}' not found. Server cannot start.")
+    exit()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# --- App Definition ---
+app = FastAPI(
+    title="NeoCart API",
+    description="Backend API for the NeoCart e-commerce platform.",
+    version="1.0.0",
+    lifespan=lifespan 
 )
 
-# -----------------------------------------------------
-# ✅ Include Routes
-# -----------------------------------------------------
-app.include_router(auth.router)
-app.include_router(api_routes.router)
-
-# -----------------------------------------------------
-# ✅ Database Initialization
-# -----------------------------------------------------
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 Application starting up...")
-    database.Base.metadata.create_all(bind=database.engine)
-    print("✅ Database tables ensured.")
-
-    # Run Excel updater once on startup
-    try:
-        print("📥 Running Excel data sync...")
-        excel_updater.sync_excel_with_database()
-        print("✅ Excel data synced successfully.")
-    except Exception as e:
-        print("⚠️ Excel sync failed:", e)
-
-    # Start watching Excel changes
-    try:
-        file_watcher.start_watcher()
-        print("👀 Excel watcher started successfully.")
-    except Exception as e:
-        print("⚠️ File watcher failed to start:", e)
-
-# -----------------------------------------------------
-# ✅ Serve React Build (dist folder)
-# -----------------------------------------------------
-# Assuming React build folder is inside backend/dist
-frontend_dist_path = os.path.join(os.path.dirname(__file__), "dist")
-
-if os.path.exists(frontend_dist_path):
-    app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="static")
-
-    @app.get("/{full_path:path}")
-    async def serve_react(full_path: str):
-        return FileResponse(os.path.join(frontend_dist_path, "index.html"))
-    print("📦 React frontend served from:", frontend_dist_path)
-else:
-    print("⚠️ React build folder not found. Please run `npm run build` in frontend.")
-
-# -----------------------------------------------------
-# ✅ Root Endpoint
-# -----------------------------------------------------
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok", "message": "NeoCart backend running successfully 🚀"}
+# --- API Routers (Pehle) ---
+# API routes hamesha static files se *PEHLE* hone chahiye
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(api_routes.router, prefix="/api") # All other routes
 
 
-# -----------------------------------------------------
-# ✅ Run Server (for local testing)
-# -----------------------------------------------------
+# --- React Frontend (Baad mein) ---
+
+# --- YAHAN FIX KIYA GAYA HAI ---
+# BASE_DIR ka istemal karke 'dist/assets' ka poora path banaya
+assets_path = os.path.join(BASE_DIR, "dist", "assets")
+
+# Check karo ki 'dist/assets' folder hai ya nahi
+if not os.path.exists(assets_path):
+    print(f"WARNING: Directory not found at '{assets_path}'. Static files may not serve correctly.")
+    # Ek dummy folder bana do taaki app crash na ho (optional)
+    # os.makedirs(assets_path, exist_ok=True) 
+
+app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+# --- FIX END ---
+
+
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """
+    Serve the React app's index.html for any path not matching an API route.
+    """
+    # Yahan bhi BASE_DIR ka istemal kiya
+    html_file_path = os.path.join(BASE_DIR, "dist", "index.html")
+    
+    if os.path.exists(html_file_path):
+        return FileResponse(html_file_path)
+    else:
+        # Agar dist/index.html nahi mili toh error do
+        print(f"ERROR: index.html not found at '{html_file_path}'")
+        return {"error": "index.html not found. Make sure you have run 'npm run build' and moved the 'dist' folder to the 'backend' directory."}
+
+# --- Run the app ---
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

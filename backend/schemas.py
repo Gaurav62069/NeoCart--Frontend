@@ -48,6 +48,7 @@ class Review(ReviewBase):
 
 # --- User Schemas ---
 class UserBase(BaseModel):
+    id: int # <-- This ID is needed for the AdminPage
     email: str
     name: Optional[str] = None
     role: str
@@ -61,7 +62,6 @@ class UserBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class User(UserBase):
-    id: int
     cart_items: List[CartItem] = []
     wishlist_items: List[WishlistItem] = []
 
@@ -88,22 +88,29 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
+# --- YAHAN NAYA SCHEMA ADD KIYA GAYA HAI ---
 # --- Product Schema ---
 
-# --- !!! THIS IS THE FIX !!! ---
-# Pydantic V2 uses 'model_config' instead of 'Config'
-# And we've matched the fields to models.py
+class ProductCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    original_price: float
+    retail_price: float
+    wholesaler_price: float
+    image_url: str
+    stock: int
+
 class Product(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
     original_price: float
     
-    # These fields are added dynamically in models.py
+    # These fields are added dynamically in crud.py
     discount_price: float = 0.0 
     discount_percent: float = 0.0
     
-    # These fields come from the database
+    # These fields come from the database (models.py)
     retail_price: float
     wholesaler_price: float
     
@@ -112,9 +119,10 @@ class Product(BaseModel):
     reviews: List[Review] = [] 
 
     model_config = ConfigDict(from_attributes=True)
-# --- FIX ENDS HERE ---
 
-
+class ProductListAdmin(BaseModel):
+    products: List[Product]
+    total_count: int
 # --- Coupon Schemas ---
 class CouponApply(BaseModel):
     code: str

@@ -34,11 +34,9 @@ class Product(Base):
     
     original_price = Column(Float, nullable=False)
     
-    # --- YEH LINES BADLI GAYI THI ---
-    # Hum ab role-specific price store kar rahe hain (Excel ke hisaab se)
+    # Updated to match the Excel file structure
     retail_price = Column(Float, nullable=False, default=0.0)
     wholesaler_price = Column(Float, nullable=False, default=0.0)
-    # --- YEH LINES BADLI GAYI THI ---
     
     image_url = Column(String, nullable=False)
     stock = Column(Integer, default=0)
